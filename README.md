@@ -2,7 +2,7 @@ This repository contains code used to generate figures for the manuscript "Envir
 
 Rhizosphere serves as a critical reservoir for antibiotic resistance genes (ARGs). Here we accessed the ecological mechanisms driving ARG assembly at the plant–soil interface. 
 
-In the main branch, you can find all codes and scripts used for statistical analysis, and visualization in this study. Demo datasets for analysis and visualization will be uploaded after the publication of our manuscript.
+In the main branch, you can find all codes and scripts used for statistical analysis and visualization in this study. Demo datasets for analysis and visualization will be uploaded after the publication of our manuscript.
 
 # analysis-code
 This repository contains all R and Python scripts used for the statistical analyses and visualizations in our study on the rhizosphere resistome. The analyses integrate multivariate statistics, network analysis, and machine learning to explore the patterns and drivers of antibiotic resistance gene (ARG) assemblages across diverse crop rhizospheres.
