@@ -1,0 +1,81 @@
+import argparse
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import cdist
+import os
+
+
+def main(input_path, output_path, k):
+    # ========== 1. 读取数据 ==========
+    data = pd.read_csv(input_path, index_col=0)
+    print(f"✅ 读取数据成功：{data.shape[0]} 行，{data.shape[1]} 列")
+    print(data.head())
+
+    # ========== 2. log 转换 ==========
+    data["Oxidation_log"] = np.log1p(data["Oxidation"])
+
+    # ========== 3. 数据标准化 ==========
+    scaler = StandardScaler()
+    x = scaler.fit_transform(data[["Oxidation_log"]])
+    x = pd.DataFrame(x, index=data.index, columns=["Oxidation_log"])
+
+    # ========== 4. 手肘法确定最优 K ==========
+    distortions = []
+    K = range(1, 10)
+    for i in K:
+        model = KMeans(n_clusters=i, random_state=42, n_init=10).fit(x)
+        distortions.append(
+            sum(np.min(cdist(x, model.cluster_centers_, "euclidean"), axis=1)) / x.shape[0]
+        )
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(K, distortions, "bx-")
+    plt.xlabel("Number of Clusters (K)")
+    plt.ylabel("Average Distortion")
+    plt.title("Elbow Method for Optimal K (log-transformed)")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+
+    elbow_plot_path = os.path.splitext(output_path)[0] + "_elbow.png"
+    plt.savefig(elbow_plot_path, dpi=300)
+    plt.close()
+    print(f"📈 手肘图已保存到: {elbow_plot_path}")
+
+    # ========== 5. 聚类 ==========
+    print(f"🔹 使用 K = {k} 进行聚类...")
+    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(x)
+
+    data["Cluster"] = labels
+
+    # ========== 6. 可视化聚类结果 ==========
+    plt.figure(figsize=(8, 5))
+    plt.scatter(data.index, data["Oxidation_log"], c=labels, cmap="Set1", s=30)
+    plt.xticks([])
+    plt.xlabel("Samples")
+    plt.ylabel("Log(Oxidation abundance)")
+    plt.title(f"KMeans Clustering (k={k}) on log-transformed data")
+    plt.colorbar(label="Cluster")
+    plt.tight_layout()
+
+    cluster_plot_path = os.path.splitext(output_path)[0] + "_cluster.png"
+    plt.savefig(cluster_plot_path, dpi=300)
+    plt.close()
+    print(f"🎨 聚类结果图已保存到: {cluster_plot_path}")
+
+    # ========== 7. 保存结果 ==========
+    data.to_csv(output_path, encoding="utf-8-sig")
+    print(f"✅ 聚类完成！结果已保存到: {output_path}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="氧化丰度聚类分析")
+    parser.add_argument("--input", required=True, help="输入 CSV 文件路径")
+    parser.add_argument("--output", required=True, help="输出结果 CSV 文件路径")
+    parser.add_argument("--k", type=int, default=2, help="聚类数（默认 2）")
+    args = parser.parse_args()
+
+    main(args.input, args.output, args.k)
