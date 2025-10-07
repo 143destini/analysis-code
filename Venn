@@ -1,0 +1,62 @@
+import argparse
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from venn import venn   # 安装：pip install venn
+
+# ==== 主函数 ====
+def main(input_path, genome_col, cluster_cols, output_dir):
+    # ---------- 读取数据 ----------
+    print(f"正在读取文件：{input_path}")
+    if input_path.endswith(".xlsx") or input_path.endswith(".xls"):
+        data = pd.read_excel(input_path)
+    elif input_path.endswith(".csv"):
+        data = pd.read_csv(input_path)
+    else:
+        raise ValueError(" 仅支持 CSV 或 Excel 文件！")
+
+    print(f" 数据读取成功，维度：{data.shape}")
+
+    # 检查列是否存在
+    if genome_col not in data.columns:
+        raise ValueError(f" 未找到基因列 '{genome_col}'！可用列为：{list(data.columns)}")
+    for col in cluster_cols:
+        if col not in data.columns:
+            raise ValueError(f" 未找到类别列 '{col}'！")
+
+    # ---------- 构建 cluster -> genome 集合 ----------
+    clusters = {}
+    for col in cluster_cols:
+        for genome, cluster in zip(data[genome_col], data[col]):
+            cluster = str(cluster).strip()
+            genome = str(genome).strip()
+            clusters.setdefault(cluster, set()).add(genome)
+
+    # 打印集合摘要
+    print("\n 数据集合摘要：")
+    for k, v in clusters.items():
+        print(f"  {k}: {len(v)} genomes")
+
+    # ---------- 绘制 Venn 图 ----------
+    plt.figure(figsize=(8, 8))
+    color_map = ["#FF9999", "#FF3333", "#bbe6fa", "#89caea", "#f2c94c", "#6fcf97"]
+    venn(clusters, cmap=color_map)
+    plt.title("Overlap of Genomes in Clusters", fontsize=14)
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "Venn图结果.png")
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"\n Venn 图已保存至：{output_path}")
+
+
+# ==== 命令行接口 ====
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="通用多集合 Venn 图绘制脚本")
+    parser.add_argument("--input", required=True, help="输入 CSV 或 Excel 文件路径")
+    parser.add_argument("--genome_col", required=True, help="基因/样本列名称（例如 Genome）")
+    parser.add_argument("--cluster_cols", nargs="+", required=True, help="一个或多个表示类别的列名")
+    parser.add_argument("--output_dir", required=True, help="输出文件夹路径")
+
+    args = parser.parse_args()
+    main(args.input, args.genome_col, args.cluster_cols, args.output_dir)
