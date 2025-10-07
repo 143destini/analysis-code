@@ -1,0 +1,83 @@
+# ==== 加载包 ====
+suppressMessages({
+  library(vegan)
+  library(picante)
+  library(dplyr)
+  library(optparse)
+})
+
+# ==== 参数设置 ====
+option_list <- list(
+  make_option(c("--abundance"), type = "character", help = "输入丰度表路径（txt 或 csv）"),
+  make_option(c("--group"), type = "character", help = "输入分组文件路径（txt 或 csv）"),
+  make_option(c("--output_dir"), type = "character", default = "results", help = "输出文件夹路径")
+)
+
+opt <- parse_args(OptionParser(option_list = option_list))
+if (is.null(opt$abundance) || is.null(opt$group)) {
+  stop(" 请使用 --abundance 和 --group 指定输入文件路径！")
+}
+
+dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ==== 1. 读取数据 ====
+message(" 读取数据中...")
+if (grepl("\\.csv$", opt$abundance)) {
+  species_df <- read.csv(opt$abundance, header = TRUE, row.names = 1, check.names = FALSE)
+} else {
+  species_df <- read.table(opt$abundance, header = TRUE, row.names = 1, sep = "\t", check.names = FALSE)
+}
+
+if (grepl("\\.csv$", opt$group)) {
+  group_df <- read.csv(opt$group, header = TRUE, check.names = FALSE)
+} else {
+  group_df <- read.table(opt$group, header = TRUE, sep = "\t", check.names = FALSE)
+}
+
+# 转置（样本为行，特征为列）
+species_df <- t(species_df)
+
+# 检查行名一致性
+if (!any(colnames(group_df) == "names")) colnames(group_df)[1] <- "names"
+merged_df <- merge(group_df, species_df, by.x = "names", by.y = "row.names")
+
+message(paste0(" 成功匹配样本数：", nrow(merged_df)))
+
+# ==== 2. 计算 Simpson 指数 ====
+message(" 计算 Simpson 指数中...")
+simpson_results <- data.frame()
+
+for (group in unique(merged_df$genotype)) {
+  group_data <- merged_df[merged_df$genotype == group, -c(1, 2)]
+  total_abundance <- colSums(group_data)
+  simpson_index <- diversity(total_abundance, index = "simpson")
+  simpson_results <- rbind(simpson_results, data.frame(Group = group, Simpson_Index = simpson_index))
+}
+
+# ==== 3. Kruskal-Wallis 检验 ====
+message(" 进行 Kruskal-Wallis 检验...")
+kruskal_result <- kruskal.test(Simpson_Index ~ Group, data = simpson_results)
+
+# ==== 4. 计算 Richness 与 Shannon ====
+message(" 计算 Shannon 与 Richness 指数中...")
+genus <- species_df
+richness <- rowSums(genus > 0)
+shannon_index <- diversity(genus, index = "shannon", base = exp(1))
+
+# ==== 5. 输出结果 ====
+write.table(simpson_results,
+            file.path(opt$output_dir, "Simpson_results.txt"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+write.csv(richness, file.path(opt$output_dir, "Richness.csv"), quote = FALSE)
+write.csv(shannon_index, file.path(opt$output_dir, "Shannon_index.csv"), quote = FALSE)
+
+# Kruskal 结果写入文件
+sink(file.path(opt$output_dir, "Kruskal_Simpson.txt"))
+cat("=== Kruskal-Wallis Test for Simpson Index ===\n")
+print(kruskal_result)
+sink()
+
+message(" 结果文件已保存至：", opt$output_dir)
+
+message("\n 分析完成！输出文件包括：")
+cat(" - Simpson_results.txt\n - Kruskal_Simpson.txt\n - Richness.csv\n - Shannon_index.csv\n")
