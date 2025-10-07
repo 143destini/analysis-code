@@ -1,0 +1,94 @@
+# ==== 1. Load required packages ====
+suppressMessages({
+  if (!requireNamespace("lavaan", quietly = TRUE)) install.packages("lavaan")
+  if (!requireNamespace("tidySEM", quietly = TRUE)) install.packages("tidySEM")
+  if (!requireNamespace("lavaanPlot", quietly = TRUE)) install.packages("lavaanPlot")
+  if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+})
+
+library(lavaan)
+library(lavaanPlot)
+library(tidySEM)
+library(ggplot2)
+
+# ==== 2. Example dataset (replace with your own) ====
+# Replace this block with:
+# df <- read.csv("your_data.csv", header = TRUE)
+set.seed(123)
+df <- data.frame(
+  X1 = runif(100, 0, 10),
+  X2 = runif(100, 5, 15),
+  X3 = runif(100, 0, 20),
+  Y1 = rnorm(100, 10, 2),
+  Y2 = rnorm(100, 5, 1),
+  Z1 = rnorm(100, 3, 0.5)
+)
+
+# ==== 3. Define SEM model ====
+# Modify relationships freely based on your data
+model <- '
+  # latent and observed variable relations
+  Y1 ~ X1 + X2 + X3
+  Y2 ~ X1 + X3
+  Z1 ~ Y1 + Y2
+'
+
+# ==== 4. Fit SEM ====
+fit <- sem(
+  model,
+  data = df,
+  std.ov = TRUE,
+  auto.var = TRUE,
+  auto.fix.first = TRUE,
+  auto.cov.lv.x = TRUE
+)
+
+# ==== 5. Summarize model ====
+summary(fit, fit.measures = TRUE, standardized = TRUE)
+print(lavInspect(fit, "rsquare"))
+print(standardizedSolution(fit))
+
+# ==== 6. Define layout (3 layers: inputs → intermediates → outputs) ====
+input_vars <- c("X1", "X2", "X3")
+mid_vars <- c("Y1", "Y2")
+output_vars <- c("Z1")
+
+layout_df <- data.frame(
+  name = c(input_vars, mid_vars, output_vars),
+  x = c(seq(1, length(input_vars)),
+        seq(1.5, 1.5 + length(mid_vars) - 1),
+        2),
+  y = c(rep(3, length(input_vars)),
+        rep(2, length(mid_vars)),
+        1),
+  stringsAsFactors = FALSE
+)
+
+# ==== 7. Prepare SEM visualization ====
+sem_graph <- prepare_graph(fit, layout = layout_df)
+
+# ==== 8. Customize edge styles ====
+edges <- sem_graph$edges
+edges$est_std_num <- as.numeric(edges$est_std)
+edges$weight <- abs(edges$est_std_num)
+edges$color <- ifelse(edges$est_std_num > 0, "red", "blue")
+
+sem_graph$edges$weight <- edges$weight
+sem_graph$edges$color <- edges$color
+
+# ==== 9. Draw SEM graph ====
+plot_obj <- plot(
+  sem_graph,
+  edge_width = sem_graph$edges$weight * 2,
+  edge_color = sem_graph$edges$color,
+  edge_label = TRUE,
+  edge_label_size = 3.5,
+  label_size = 4,
+  node_shape = "box",
+  layout = "tree"
+)
+
+print(plot_obj)
+
+# ==== 10. Optional save ====
+# ggsave("SEM_plot_generic.pdf", plot_obj, width = 8, height = 6, dpi = 300)
