@@ -1,0 +1,112 @@
+# ==== 加载包 ====
+suppressMessages({
+  library(vegan)
+  library(dplyr)
+  library(ggplot2)
+  library(ggsci)
+  library(optparse)
+})
+
+# ==== 参数设置 ====
+option_list <- list(
+  make_option(c("--tax"), type = "character", help = "微生物丰度表路径（CSV或TXT）"),
+  make_option(c("--arg"), type = "character", help = "ARG丰度表路径（CSV或TXT）"),
+  make_option(c("--group"), type = "character", help = "分组文件路径（CSV或TXT）"),
+  make_option(c("--output"), type = "character", help = "输出文件夹路径", default = "results")
+)
+
+opt <- parse_args(OptionParser(option_list = option_list))
+if (is.null(opt$tax) || is.null(opt$arg) || is.null(opt$group)) {
+  stop(" 请使用参数 --tax、--arg、--group 指定文件路径")
+}
+
+dir.create(opt$output, showWarnings = FALSE, recursive = TRUE)
+
+# ==== 1. 数据读取 ====
+message(" 读取数据中...")
+
+tax <- read.csv(opt$tax, sep = ",", header = TRUE, row.names = 1, check.names = FALSE)
+arg <- read.csv(opt$arg, sep = ",", header = TRUE, row.names = 1, check.names = FALSE)
+group <- read.csv(opt$group, sep = ",", header = TRUE, check.names = FALSE)
+
+# ==== 2. 检查样本匹配 ====
+common_samples <- intersect(rownames(tax), rownames(arg))
+if (length(common_samples) == 0) stop(" 样本名不匹配，请检查行名一致性！")
+tax <- tax[common_samples, ]
+arg <- arg[common_samples, ]
+message(paste0(" 匹配到 ", length(common_samples), " 个样本"))
+
+# ==== 3. Bray-Curtis 距离 + MDS ====
+tax.dist <- vegdist(tax, method = 'bray')
+arg.dist <- vegdist(arg, method = 'bray')
+mds.t <- monoMDS(tax.dist)
+mds.a <- monoMDS(arg.dist)
+
+# ==== 4. Procrustes 分析 ====
+pro.t.a <- procrustes(mds.t, mds.a, symmetric = TRUE)
+pro_test <- protest(mds.t, mds.a, permutations = 999)
+message(" Procrustes 分析完成")
+message(paste0("   M² = ", round(pro_test$ss, 4), ", p = ", pro_test$signif))
+
+# ==== 5. 输出检验结果 ====
+test_path <- file.path(opt$output, "Procrustes_significance.txt")
+sink(test_path)
+cat("=== Procrustes Analysis Results ===\n")
+print(summary(pro.t.a))
+cat("\n=== Permutation Test ===\n")
+print(pro_test)
+sink()
+message(paste0(" 显著性检验结果已保存：", test_path))
+
+# ==== 6. 整理绘图数据 ====
+Pro_Y <- cbind(
+  data.frame(pro.t.a$Yrot),  # 微生物群落坐标
+  data.frame(pro.t.a$X)      # ARG坐标
+)
+colnames(Pro_Y) <- c("MDS1", "MDS2", "X1", "X2")
+Pro_Y$sample <- rownames(Pro_Y)
+
+# ==== 7. 合并分组 ====
+if (!"sample" %in% colnames(group)) colnames(group)[1] <- "sample"
+Pro_Y <- left_join(Pro_Y, group, by = "sample")
+Pro_Y$type <- factor(Pro_Y[[ncol(Pro_Y)]])  # 默认最后一列是type
+
+# ==== 8. 旋转矩阵 ====
+Pro_X <- data.frame(pro.t.a$rotation)
+
+# ==== 9. 绘制矢量图 ====
+p <- ggplot(data = Pro_Y) +  
+  geom_segment(aes(x = X1, y = X2, xend = MDS1, yend = MDS2, color = type),
+               arrow = arrow(length = unit(0, 'cm')), size = 1) +  
+  geom_point(aes(X1, X2, color = type), size = 5, shape = 16) +  
+  geom_point(aes(MDS1, MDS2, color = type), size = 5, shape = 17) +  
+  scale_color_npg() +  
+  theme(panel.background = element_rect(color = 'black', fill = 'transparent'),
+        legend.key = element_rect(fill = 'transparent'),
+        axis.line = element_line(colour = "black"),
+        axis.text = element_text(colour = 'black', size = 12),
+        axis.title = element_text(colour = 'black', size = 14),
+        plot.title = element_text(size = 14, colour = "black", hjust = 0.5, face = "bold")) +
+  labs(x = 'Dimension 1', y = 'Dimension 2', color = '',
+       title = "Procrustes: Microbial community vs ARGs") +  
+  geom_vline(xintercept = 0, color = 'gray', linetype = 2, size = 0.3) +  
+  geom_hline(yintercept = 0, color = 'gray', linetype = 2, size = 0.3) +  
+  geom_abline(intercept = 0, slope = Pro_X[1, 2] / Pro_X[1, 1], size = 0.3) +  
+  geom_abline(intercept = 0, slope = Pro_X[2, 2] / Pro_X[2, 1], size = 0.3) +  
+  annotate('text',
+           label = paste0('M² = ', round(pro_test$ss, 3),
+                          ', p = ', pro_test$signif),
+           x = -0.2, y = 0.15, size = 4, hjust = 0) +  
+  coord_fixed()
+
+# ==== 10. 保存图形 ====
+plot_path <- file.path(opt$output, "Procrustes_plot.png")
+ggsave(plot_path, p, width = 8, height = 8, dpi = 300)
+message(paste0(" 图形已保存：", plot_path))
+
+# ==== 11. 导出结果表 ====
+out_coord_path <- file.path(opt$output, "Procrustes_coordinates.csv")
+write.csv(Pro_Y, out_coord_path)
+message(paste0(" 坐标结果已保存：", out_coord_path))
+
+message("\n 全部分析完成！结果已输出到: ", opt$output)
