@@ -1,0 +1,105 @@
+# ==== Load required packages ====
+suppressMessages({
+  library(linkET)
+  library(ggplot2)
+  library(dplyr)
+  library(cols4all)
+})
+
+# ==== 1. Example data ====
+# Replace this with your actual data import, e.g.:
+# data_A <- read.csv("dataset_A.csv", row.names = 1)
+# data_B <- read.csv("dataset_B.csv", row.names = 1)
+set.seed(123)
+data_A <- data.frame(matrix(runif(50, 0, 1), nrow = 10))
+data_B <- data.frame(matrix(runif(30, 0, 1), nrow = 10))
+colnames(data_A) <- paste0("VarA_", 1:ncol(data_A))
+colnames(data_B) <- paste0("VarB_", 1:ncol(data_B))
+
+# ==== 2. Normality tests (Shapiro-Wilk) ====
+test_A <- sapply(lapply(data_A, shapiro.test), `[[`, "p.value")
+test_B <- sapply(lapply(data_B, shapiro.test), `[[`, "p.value`)
+
+# ==== 3. Correlation within dataset_B (Pearson) ====
+cor_env <- correlate(data_B, method = "pearson")
+cor_env_tbl <- cor_env %>% as_md_tbl()
+# write.csv(cor_env_tbl, "pearson_correlation_within_B.csv")
+
+# ==== 4. Correlation between dataset_A and dataset_B (Spearman) ====
+cor_AB <- correlate(data_A, data_B, method = "spearman")
+cor_AB_tbl <- cor_AB %>% as_md_tbl()
+# write.csv(cor_AB_tbl, "spearman_correlation_between_A_and_B.csv")
+
+# ==== 5. Mantel test ====
+# Example mapping between corresponding variables (edit freely)
+mantel_result <- mantel_test(
+  data_A, data_B,
+  mantel_fun = "mantel",
+  spec_select = list(
+    V1 = 1:1,
+    V2 = 2:2,
+    V3 = 3:3,
+    V4 = 4:4
+  ),
+  spec_dist = dist_func(.FUN = "vegdist", method = "bray"),
+  env_dist = dist_func(.FUN = "vegdist", method = "euclidean")
+)
+
+# write.csv(mantel_result, "mantel_results.csv", row.names = TRUE)
+
+# ==== 6. Categorize Mantel r and p ====
+mantel_cat <- mutate(
+  mantel_result,
+  r = cut(r, breaks = c(-Inf, 0.4, 0.6, 0.8, Inf),
+          labels = c("(0, 0.4]", "(0.4, 0.6]", "(0.6, 0.8]", "(0.8, 1]")),
+  p = cut(p, breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+          labels = c("***", "**", "*", "ns"))
+)
+mantel_cat <- as.data.frame(mantel_cat, stringsAsFactors = FALSE)
+
+# ==== 7. Visualization: heatmap + Mantel connections ====
+plot_obj <- correlate(data_B, method = "spearman") %>%
+  qcorrplot(type = "upper", diag = FALSE, grid_col = "black", grid_size = 0.25) +
+  geom_square() +
+  geom_mark(
+    sep = "\n", size = 3,
+    sig_level = c(0.05, 0.01, 0.001),
+    sig_thres = 0.05,
+    family = "serif", colour = "black"
+  ) +
+  scale_fill_gradientn(
+    colours = colorRampPalette(c("#EADBE7", "#aeb9e2", "#acc9e9",
+                                 "#85b1cf", "#f2ddb3"))(10),
+    limits = c(-1, 1), breaks = seq(-1, 1, 0.5)
+  ) +
+  geom_couple(
+    aes(color = p, size = r),
+    data = mantel_cat,
+    label.size = 5.5, drop = TRUE, label.colour = "black",
+    label.fontface = 1, label.family = "serif",
+    nudge_x = 0.5, curvature = 0.15
+  ) +
+  scale_size_manual(values = c(0.5, 0.8, 1.2, 2)) +
+  scale_color_manual(values = c("yellow", "#D8A4A7", "pink")) +
+  guides(
+    color = guide_legend(title = "Mantel's p", order = 1),
+    size = guide_legend(title = "Mantel's r", order = 2),
+    fill = guide_colorbar(title = "Correlation", order = 3)
+  ) +
+  theme(
+    axis.text = element_text(color = "black", size = 14, family = "serif"),
+    axis.text.x.top = element_text(color = "black", size = 14, family = "serif",
+                                   angle = 45, hjust = 0, vjust = 0),
+    legend.key = element_blank(),
+    legend.key.size = unit(0.36, "cm"),
+    legend.spacing.y = unit(0.8, "cm"),
+    legend.key.spacing.y = unit(0.2, "cm"),
+    legend.text = element_text(color = "black", size = 13, family = "serif"),
+    legend.title = element_text(color = "black", size = 14, family = "serif",
+                                margin = margin(b = 10))
+  )
+
+print(plot_obj)
+
+# ==== 8. Optional export ====
+# ggsave("mantel_correlation_plot.pdf", plot_obj, width = 10, height = 8, dpi = 600)
