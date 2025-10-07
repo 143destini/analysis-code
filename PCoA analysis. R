@@ -1,0 +1,77 @@
+# ==== 1. Load required packages ====
+suppressMessages({
+  if (!requireNamespace("vegan", quietly = TRUE)) install.packages("vegan")
+  if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+})
+
+library(vegan)
+library(ggplot2)
+
+# ==== 2. Example data (replace with your own) ====
+# OTU abundance table: rows = samples, columns = features
+set.seed(123)
+otu <- data.frame(matrix(runif(300, 0, 100), nrow = 15))
+rownames(otu) <- paste0("Sample_", 1:nrow(otu))
+colnames(otu) <- paste0("OTU_", 1:ncol(otu))
+
+# Group information
+group <- data.frame(
+  SampleID = rownames(otu),
+  Group = rep(c("GroupA", "GroupB", "GroupC"), each = 5)
+)
+
+# ==== 3. Log transform and calculate Bray-Curtis distance ====
+otu_log <- log1p(otu)
+dist_bray <- vegdist(otu_log, method = "bray")
+
+# ==== 4. PCoA (Principal Coordinates Analysis) ====
+pcoa <- cmdscale(dist_bray, k = 2, eig = TRUE, add = TRUE)
+eig_ratio <- (pcoa$eig)[1:2] / sum(pcoa$eig)
+
+# ==== 5. Extract coordinates ====
+site_coord <- data.frame(pcoa$points[, 1:2])
+colnames(site_coord) <- c("PCoA1", "PCoA2")
+site_coord$SampleID <- rownames(site_coord)
+
+# Merge group info
+site_coord <- merge(site_coord, group, by = "SampleID")
+
+# ==== 6. Visualization ====
+pcoa_plot <- ggplot(site_coord, aes(x = PCoA1, y = PCoA2)) +
+  theme_minimal(base_size = 14) +
+  geom_vline(xintercept = 0, color = "gray80", linewidth = 0.3) +
+  geom_hline(yintercept = 0, color = "gray80", linewidth = 0.3) +
+  geom_point(aes(color = Group, shape = Group), size = 4, alpha = 0.9) +
+  scale_color_manual(values = c("#1f78b4", "#33a02c", "#e31a1c")) +
+  labs(
+    x = paste0("PCoA1 (", round(100 * eig_ratio[1], 2), "%)"),
+    y = paste0("PCoA2 (", round(100 * eig_ratio[2], 2), "%)"),
+    title = "PCoA based on Bray-Curtis distance"
+  ) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    legend.position = "right",
+    legend.title = element_blank()
+  )
+
+print(pcoa_plot)
+
+# ==== 7. Statistical testing ====
+
+## (1) PERMANOVA (Adonis)
+adonis_res <- adonis2(otu ~ Group, data = group, permutations = 999, method = "bray")
+cat("\n===== PERMANOVA (Adonis) Results =====\n")
+print(adonis_res)
+
+## (2) Homogeneity of dispersion (Betadisper)
+dispersion <- betadisper(dist_bray, group$Group)
+cat("\n===== Betadisper Test =====\n")
+print(permutest(dispersion))
+
+## (3) ANOSIM
+anosim_res <- anosim(dist_bray, group$Group)
+cat("\n===== ANOSIM Results =====\n")
+print(anosim_res)
+
+# ==== 8. Optional export ====
+# ggsave("PCoA_generic.pdf", pcoa_plot, width = 6, height = 4.5)
