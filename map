@@ -1,0 +1,101 @@
+# ==== 加载包 ====
+suppressMessages({
+  library(tidyverse)
+  library(sf)
+  library(ggspatial)
+  library(ggtext)
+  library(ggnewscale)
+  library(optparse)
+})
+
+# ==== 参数 ====
+option_list <- list(
+  make_option(c("--input"), type = "character", help = "输入 CSV 文件路径"),
+  make_option(c("--output_dir"), type = "character", default = "results", help = "输出文件夹路径"),
+  make_option(c("--title"), type = "character", default = "Geographic distribution of different plant types", help = "图标题")
+)
+opt <- parse_args(OptionParser(option_list = option_list))
+
+if (is.null(opt$input)) stop(" 请使用 --input 指定输入文件路径")
+dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ==== 1. 读取数据 ====
+message(" 读取样本数据中...")
+df <- read_csv(opt$input)
+if (!all(c("Plant", "Longitude", "Latitude") %in% colnames(df))) {
+  stop(" 输入文件必须包含 Plant、Longitude、Latitude 三列！")
+}
+message(paste0(" 成功读取 ", nrow(df), " 个样本"))
+
+# ==== 2. 植物分类 ====
+leafy_veg <- c("Lettuce", "Pakchoi", "Cabbage", "GanLan", "XianCai", "CaiXin")
+grains <- c("Maize", "Sorghum", "Wheat")
+legumes <- c("Chickpea", "Bean")
+melons_fruits <- c("Cucumber", "Melon", "Tomato", "Apple", "Guava", "Citrus")
+others <- c("TeaTree", "TiepiShihu", "SpartinaGrass")
+
+dff <- df %>%
+  mutate(Plant = str_trim(Plant)) %>%
+  mutate(plant_group = case_when(
+    Plant %in% leafy_veg ~ "Leafy vegetables",
+    Plant %in% grains ~ "Grains",
+    Plant %in% legumes ~ "Legumes",
+    Plant %in% melons_fruits ~ "Fruits",
+    Plant %in% others ~ "Others",
+    TRUE ~ "Unknown"
+  ))
+
+dff$plant_group <- factor(dff$plant_group,
+                          levels = c("Leafy vegetables", "Grains", "Legumes", "Fruits", "Others", "Unknown"))
+
+# ==== 3. 颜色与形状 ====
+color_map <- tibble::tribble(
+  ~group,              ~color,     ~shape,
+  "Leafy vegetables",  "#79cb9b",  19,
+  "Grains",            "#fc8d62",  19,
+  "Legumes",           "#ffeb7d",  19,
+  "Fruits",            "#a079bf",  19,
+  "Others",            "#1e74b0",  1,
+  "Unknown",           "#999999",  4
+)
+
+# ==== 4. 地图底图 ====
+world <- map_data("world")
+lat_lines <- c(-50, -25, 0, 25, 50)
+lon_lines <- c(-150, -100, -50, 0, 50, 100, 150)
+
+# ==== 5. 绘图 ====
+gg <- ggplot() +
+  geom_hline(yintercept = lat_lines, color = "#DFF3F7", linetype = "solid", linewidth = 0.3) +
+  geom_vline(xintercept = lon_lines, color = "#DFF3F7", linetype = "solid", linewidth = 0.3) +
+  geom_text(data = tibble(lat = lat_lines, lon = rep(min(world$long) + 5, length(lat_lines))),
+            aes(x = lon, y = lat, label = paste0(abs(lat), "°", ifelse(lat > 0, "N", ifelse(lat < 0, "S", "")))),
+            color = "#AAAAAA", size = 3, hjust = 0) +
+  geom_text(data = tibble(lon = lon_lines, lat = rep(min(world$lat) + 5, length(lon_lines))),
+            aes(x = lon, y = lat, label = paste0(abs(lon), "°", ifelse(lon > 0, "E", ifelse(lon < 0, "W", "")))),
+            color = "#AAAAAA", size = 3, vjust = 1) +
+  geom_polygon(data = world, aes(x = long, y = lat, group = group),
+               fill = "grey90", color = "#BFE4EE", linewidth = 0.3) +
+  geom_point(data = dff %>% left_join(color_map, by = c("plant_group" = "group")),
+             aes(x = Longitude, y = Latitude, color = plant_group, shape = plant_group),
+             size = 3, stroke = 1) +
+  scale_color_manual(values = deframe(color_map[, c("group", "color")])) +
+  scale_shape_manual(values = deframe(color_map[, c("group", "shape")])) +
+  labs(x = NULL, y = NULL, title = opt$title) +
+  theme_test() +
+  theme(
+    legend.position = "right",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 10),
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.border = element_blank()
+  )
+
+# ==== 6. 保存输出 ====
+output_path <- file.path(opt$output_dir, "plant_distribution_map.png")
+ggsave(output_path, gg, width = 10, height = 5, dpi = 300)
+message(paste0(" 地图已保存：", output_path))
+
+message("\n 分布图绘制完成！输出目录：", opt$output_dir)
