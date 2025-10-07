@@ -1,0 +1,89 @@
+# ==== 1. Load required packages ====
+suppressMessages({
+  if (!requireNamespace("Hmisc", quietly = TRUE)) install.packages("Hmisc")
+  if (!requireNamespace("igraph", quietly = TRUE)) install.packages("igraph")
+})
+
+library(Hmisc)
+library(igraph)
+
+# ==== 2. Load input data ====
+# Replace these with your own file paths or data frames
+# Each dataset: rows = samples, columns = features/variables
+# Example placeholders
+set.seed(123)
+dataA <- data.frame(matrix(runif(100), nrow = 10))
+dataB <- data.frame(matrix(runif(60), nrow = 10))
+colnames(dataA) <- paste0("A_", 1:ncol(dataA))
+colnames(dataB) <- paste0("B_", 1:ncol(dataB))
+
+# ==== 3. Compute Spearman correlation ====
+corr_result <- rcorr(as.matrix(dataA), as.matrix(dataB), type = 'spearman')
+
+r <- corr_result$r
+p <- corr_result$P
+
+# Extract cross-correlations only (A vs B)
+r <- r[colnames(dataA), colnames(dataB)]
+p <- p[colnames(dataA), colnames(dataB)]
+
+# ==== 4. Apply filtering thresholds ====
+# Modify thresholds here if needed
+r_threshold <- 0.4   # correlation strength cutoff
+p_threshold <- 0.05  # significance cutoff
+
+# Zero out weak correlations
+r[abs(r) < r_threshold] <- 0
+
+# Adjust p-values (Benjamini-Hochberg)
+p <- p.adjust(p, method = 'BH')
+p[p >= p_threshold] <- 0
+p[p < p_threshold & p >= 0] <- 1
+
+# Keep only significant correlations
+filtered_r <- r * p
+filtered_r[filtered_r <= 0] <- 0  # keep positive correlations only (optional)
+filtered_r <- data.frame(filtered_r, check.names = FALSE)
+
+# ==== 5. Build adjacency matrix ====
+nodes <- c(colnames(dataA), colnames(dataB))
+adj_mat <- matrix(0, nrow = length(nodes), ncol = length(nodes),
+                  dimnames = list(nodes, nodes))
+
+adj_mat[colnames(dataA), colnames(dataB)] <- as.matrix(filtered_r)
+adj_mat[colnames(dataB), colnames(dataA)] <- t(as.matrix(filtered_r))
+diag(adj_mat) <- 0
+
+# ==== 6. Create igraph network ====
+g <- graph_from_adjacency_matrix(adj_mat, mode = 'undirected', weighted = TRUE)
+
+cat("Network summary:\n")
+cat("  Number of nodes:", gorder(g), "\n")
+cat("  Number of edges:", gsize(g), "\n")
+
+# ==== 7. Plot (optional quick view) ====
+plot(g,
+     edge.width = E(g)$weight * 5,
+     vertex.size = 15,
+     vertex.label.cex = 0.8,
+     main = "Correlation Network")
+
+# ==== 8. Export GraphML (for Cytoscape/Gephi) ====
+# write_graph(g, file = "network.graphml", format = "graphml")
+
+# ==== 9. Create edge list for external tools ====
+edge_indices <- which(r != 0, arr.ind = TRUE)
+edges <- data.frame(
+  Source = rownames(r)[edge_indices[, 1]],
+  Target = colnames(r)[edge_indices[, 2]],
+  Weight = r[edge_indices],
+  stringsAsFactors = FALSE
+)
+
+# Add correlation sign info
+edges$Correlation <- ifelse(edges$Weight > 0, "positive",
+                            ifelse(edges$Weight < 0, "negative", "none"))
+edges <- edges[, c("Source", "Target", "Correlation", "Weight")]
+
+# ==== 10. Export edge table ====
+# write.csv(edges, "network_edges.csv", row.names = FALSE)
