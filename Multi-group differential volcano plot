@@ -1,0 +1,110 @@
+# ==== 加载包 ====
+suppressMessages({
+  library(ggthemes)
+  library(ggfun)
+  library(ggrepel)
+  library(RColorBrewer)
+  library(magrittr)
+  library(dplyr)
+  library(ggplot2)
+  library(tidyr)
+  library(forcats)
+  library(tibble)
+  library(optparse)
+})
+
+# ==== 参数接口 ====
+option_list <- list(
+  make_option(c("--input"), type = "character", help = "输入 CSV 文件路径"),
+  make_option(c("--output_dir"), type = "character", default = "results", help = "输出文件夹路径"),
+  make_option(c("--topn"), type = "integer", default = 5, help = "每组标注显著性最强的前 n 个点（默认 5）")
+)
+opt <- parse_args(OptionParser(option_list = option_list))
+if (is.null(opt$input)) stop(" 请使用 --input 指定输入文件路径")
+dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ==== 1. 读取数据 ====
+message(" 读取数据中...")
+dd <- read.csv(opt$input, check.names = FALSE)
+if (!any(grepl("^pvalue", names(dd))) || !any(grepl("^FC", names(dd)))) {
+  stop(" 文件中必须包含以 pvalue: 和 FC: 开头的列！")
+}
+message(paste0(" 数据读取成功：", nrow(dd), " 行，", ncol(dd), " 列"))
+
+# ==== 2. 整理数据 ====
+d1 <- dd %>%
+  pivot_longer(starts_with("pvalue"), names_to = "Group", values_to = "pvalue", names_prefix = "pvalue:") %>%
+  select(Taxonomy, Group, pvalue)
+
+d2 <- dd %>%
+  pivot_longer(starts_with("FC"), names_to = "Group", values_to = "FC", names_prefix = "FC:") %>%
+  select(Taxonomy, Group, FC)
+
+dd1 <- left_join(d1, d2, by = c("Taxonomy", "Group")) %>%
+  mutate(logFC = log2(FC)) %>%
+  mutate(
+    regulate = case_when(
+      pvalue < 0.05 & logFC >= 0.5 ~ "Up",
+      pvalue < 0.05 & logFC <= -0.5 ~ "Down",
+      TRUE ~ "Not"
+    )
+  )
+
+# 保留显著差异的点
+dd_sig <- dd1 %>% filter(regulate != "Not") %>% arrange(Group)
+dd_sig$Group <- dd_sig$Group %>% fct_inorder()
+
+# ==== 3. 各组上下限范围 ====
+bar <- sapply(c("min", "max"), function(x) {
+  sapply(levels(dd_sig$Group), function(xx) {
+    mm <- dd_sig %>% filter(Group == xx)
+    if (x == "min") min(mm$logFC) * 1.2 else max(mm$logFC) * 1.2
+  })
+}) %>%
+  as.data.frame() %>%
+  rownames_to_column("Group")
+
+# ==== 4. 标注显著基因 ====
+label <- dd_sig %>%
+  group_by(Group) %>%
+  slice_min(pvalue, n = opt$topn)
+
+# ==== 5. 绘图 ====
+p <- ggplot(dd_sig, aes(x = Group, y = logFC)) +
+  geom_col(data = bar, aes(x = Group, y = min), fill = "#dcdcdc", alpha = 0.6) +
+  geom_col(data = bar, aes(x = Group, y = max), fill = "#dcdcdc", alpha = 0.6) +
+  geom_jitter(aes(size = abs(logFC), alpha = abs(logFC), color = regulate), width = 0.2) +
+  geom_text_repel(
+    data = label,
+    aes(label = Taxonomy),
+    size = 3,
+    box.padding = 0.25,
+    max.overlaps = Inf
+  ) +
+  scale_color_manual(values = c(Down = "#0299D9", Up = "#EA702D")) +
+  labs(
+    y = expression(log[2] ~ FC),
+    x = NULL,
+    color = "Regulation",
+    title = "Significant taxa across groups"
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 3))) +
+  theme_bw(base_size = 13) +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "right",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# ==== 6. 保存图片 ====
+output_path <- file.path(opt$output_dir, "multi_group_volcano.png")
+ggsave(output_path, p, width = 8, height = 6, dpi = 300)
+message(paste0(" 火山图已保存：", output_path))
+
+# ==== 7. 输出显著表 ====
+label_out <- file.path(opt$output_dir, "top_significant_taxa.csv")
+write.csv(label, label_out, row.names = FALSE)
+message(paste0(" Top ", opt$topn, " 显著结果表已保存：", label_out))
+
+message("\n 分析完成！输出目录：", opt$output_dir)
